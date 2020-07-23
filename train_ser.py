@@ -71,7 +71,7 @@ def main(args):
     # Train
     train_stat = train(dataloader, params, save_path=args.save_model)
 
-    #return train_stat
+    return train_stat
 
 
 def parse_arguments(argv):
