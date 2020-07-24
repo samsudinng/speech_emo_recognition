@@ -4,7 +4,7 @@ Recognizing emotion from speech with artificial neural network.
 
 ## Overview
 
-This repository contains my pyTorch implementation of a complete SER model training and evaluation, from features extraction to model cross-validation. It may hopefully serve as a framework for other SER model evaluation, where new models can be plugged in and evaluated easily.
+This repository contains my pyTorch implementation of a complete SER model training and evaluation, from features extraction to model cross-validation. It may hopefully serve as a framework for other SER model evaluation, where new models can be plugged in and evaluated quickly.
 
 I also included resources for speech emotion recognition, including publications, datasets, and useful python packages. These resources are collected while working on SER project as part of my MSc. study. 
 
