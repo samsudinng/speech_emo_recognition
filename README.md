@@ -1,6 +1,6 @@
 # Speech Emotion Recognition (SER) Framework with PyTorch
 
-PyTorch implementation of a __Fully-Convolutional Network with Attention (FCN+Attention)__ as a topic for my MSc. in AI (Nanyang Technological University, Singapore) Master Project. As I built the model and training framework, I added support for various dataset, features, SER models, training techniques and cross-validation. It may hopefully serves as a framework for other SER model implementation, where new models can be plugged in and evaluated quickly.   
+PyTorch implementation of __Fully-Convolutional Network with Attention (FCN+Attention)__ SER model. It is the topic of my project as part of my post-graduate study (MSc. in AI, Nanyang Technological University, Singapore). As I was experimenting with the model and training framework, I added support for various dataset, features, models, tuning, and performance improvement techniques. It may hopefully serves as a framework for other SER model implementation, where new models can be plugged in, experimented and evaluated quickly.   
 
 I also included resources for SER, including publications, datasets, and useful python packages. These resources are collected during my research, implementation and optimization phase. 
 
@@ -60,30 +60,43 @@ The model to be trained can be selected via command line with the following labe
 ### Training and Evaluation
 
 
-
+------------------------------------
 ## Usage
 
 ## Requirements
 
-
+------------------------------------
 ## SER Publications and Results
 
 ### "Leaderboard"
 
 ### Papers
 
-
+------------------------------------
 ## SER Datasets
 
 ### IEMOCAP
 
 ### emoDB
 
-
+------------------------------------
 ## Useful Packages
 
+### Audio feature extraction
 
-## Neural Network Model Training: Tips and Tricks
+librosa, python_speech_features
+
+### 
+
+------------------------------------
+## How to Improve Model Performance?
+
+### Dataset Oversampling
+
+### Mixup
+
+### Data Augmentation
+
 
 
 
