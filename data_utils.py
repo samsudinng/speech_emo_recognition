@@ -7,6 +7,9 @@ from imblearn.over_sampling import RandomOverSampler
 from collections import Counter
 from sklearn import preprocessing
 from collections import Counter
+import albumentations as A
+import random
+from tqdm import tqdm
 
 SCALER_TYPE = {'standard':preprocessing.StandardScaler,
                'minmax'  :preprocessing.MinMaxScaler
@@ -260,7 +263,8 @@ class DatasetLoader:
     """
     def __init__(self, features_data,
                 val_speaker_id='1M', test_speaker_id='1F', 
-                scaling='standard', oversample=False):
+                scaling='standard', oversample=False,
+                augment=False):
         
         #features_data format: dictionary
         #    {speaker_id: (data_tot, labels_tot, labels_segs_tot, segs)}
@@ -288,11 +292,16 @@ class DatasetLoader:
                 train_labels = np.concatenate((train_labels,
                                                features_data[speaker_id][2].astype(np.long)),
                                                axis=0)
-        self.train_data = train_data
-        self.train_labels = train_labels
+        
+        if augment == True:
+            #perform training data augmentation
+            self.train_data, self.train_labels = data_augment(train_data, train_labels)
+        else:
+            self.train_data = train_data
+            self.train_labels = train_labels
         self.num_classes=len(Counter(train_labels).items())
         self.num_in_ch = self.train_data.shape[1]
-        
+
         #get validation dataset
         self.val_data       = features_data[val_speaker_id][0].astype(np.float32)
         self.val_seg_labels = features_data[val_speaker_id][2].astype(np.long)
@@ -426,4 +435,60 @@ def random_oversample(data, labels):
     data_resampled = np.expand_dims(data_resampled, axis=1)
     
     return data_resampled, label_resampled
+
+
+def data_augment(data, label):
+    """
+    Perform data augmentation based on albumentations package.
+    Transform pipeline:
+        - Time masking
+    """
+    aug_data, aug_label = None, None
+    data_and_label = zip(data, label)
+    #for i in tqdm(range(data.shape[0]), desc='Data Augmentation'):
+    for spec, spec_label in tqdm(data_and_label, desc='Data Augmentation'):
+        #spec = data[i].copy().squeeze(axis=0)
+        spec = spec.squeeze(axis=0)
+        spec_aug = spec_augment(spec, num_mask=1, time_masking_max_percentage=0.25 )
+        spec_aug = np.expand_dims(spec_aug, axis=0)
+        if aug_data is None:
+            aug_data = spec_aug
+            aug_label= spec_label
+        else:
+            aug_data = np.vstack((aug_data, spec_aug))
+            aug_label = np.append(aug_label, spec_label)
+    
+    #append augmented data to training data
+    aug_data = np.expand_dims(aug_data, axis=1)
+    data = np.vstack((data,aug_data))
+    label= np.append(label,aug_label)
+
+    return data, label
+
+def spec_augment(spec: np.ndarray, num_mask=0, 
+                 freq_masking_max_percentage=0.0, time_masking_max_percentage=0.0):
+
+    """
+    Quick implementation of Google's SpecAug
+    Source: https://www.kaggle.com/davids1992/specaugment-quick-implementation
+    """
+    
+    spec = spec.copy()
+    for i in range(num_mask):
+        all_frames_num, all_freqs_num = spec.shape
+        freq_percentage = random.uniform(0.0, freq_masking_max_percentage)
+        
+        num_freqs_to_mask = int(freq_percentage * all_freqs_num)
+        f0 = np.random.uniform(low=0.0, high=all_freqs_num - num_freqs_to_mask)
+        f0 = int(f0)
+        spec[:, f0:f0 + num_freqs_to_mask] = 0
+
+        time_percentage = random.uniform(0.0, time_masking_max_percentage)
+        
+        num_frames_to_mask = int(time_percentage * all_frames_num)
+        t0 = np.random.uniform(low=0.0, high=all_frames_num - num_frames_to_mask)
+        t0 = int(t0)
+        spec[t0:t0 + num_frames_to_mask, :] = 0
+    
+    return spec
 

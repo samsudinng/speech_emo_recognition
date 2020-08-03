@@ -9,8 +9,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torch_lr_finder import LRFinder
 import torch.nn.functional as f
+import os
+import random
+#from torch.utils.tensorboard import SummaryWriter
 
-np.random.seed(0)
 
 def main(args):
     
@@ -18,7 +20,6 @@ def main(args):
     params={
             #model & features parameters
             'ser_model': args.ser_model,
-            'num_classes':args.num_classes,
 
             #training
             'val_id': args.val_id,
@@ -31,7 +32,7 @@ def main(args):
             'use_gpu':args.gpu,
             
             #best mode
-            'save_model': args.save_model,
+            'save_label': args.save_label,
             
             #parameters for tuning
             'oversampling': args.oversampling,
@@ -39,6 +40,8 @@ def main(args):
             'scaler': args.scaler,
             'shuffle': args.shuffle,
             'pretrained': args.pretrained,
+            'augment' : args.augment,
+            'mixup' : args.mixup,
             'find_lr': args.find_lr
             }
 
@@ -52,10 +55,7 @@ def main(args):
     print('\n')
 
     #set random seed
-    np.random.seed(params['random_seed'])
-    torch.manual_seed(params['random_seed'])
-    torch.cuda.manual_seed(params['random_seed'])
-    #torch.backends.cudnn.deterministic = True
+    seed_everything(params['random_seed'])
 
     # Load dataset
     with open(args.features_file, "rb") as fin:
@@ -65,11 +65,12 @@ def main(args):
                                val_speaker_id=args.val_id,
                                test_speaker_id=args.test_id,
                                scaling=args.scaler,
-                               oversample=args.oversampling
+                               oversample=args.oversampling,
+                               augment=args.augment
                                )
 
     # Train
-    train_stat = train(dataloader, params, save_path=args.save_model)
+    train_stat = train(dataloader, params, save_label=args.save_label)
 
     return train_stat
 
@@ -87,8 +88,6 @@ def parse_arguments(argv):
     #Model
     parser.add_argument('--ser_model', type=str, default='fcn_attention',
         help='SER model to be loaded')
-    parser.add_argument('--num_classes', type=int, default=4,
-        help='Number of classes.')
     
     #Training
     parser.add_argument('--val_id', type=str, default='1F',
@@ -109,8 +108,9 @@ def parse_arguments(argv):
         help='If 1, use GPU')
     
     #Best Model
-    parser.add_argument('--save_model', type=str, default=None,
-        help='Path to save the best model.')
+    parser.add_argument('--save_label', type=str, default=None,
+        help='Label for the current run, used to save the best model '
+             'and Tensorboard label.')
 
     #Parameters for model tuning
     parser.add_argument('--oversampling', action='store_true',
@@ -133,7 +133,12 @@ def parse_arguments(argv):
              'initialized randomly. Set this flag to initalize with '
              'pre-trained weights.')
     
+    parser.add_argument('--augment', action='store_true',
+        help='Set this to true to perform data augmentation at dataloader')
     
+    parser.add_argument('--mixup', action='store_true',
+        help='Set this to true to perform mixup at dataloader')
+
     parser.add_argument('--find_lr', action='store_true',
         help='Use LRFinder tool to plot loss vs iteration to find optimal learning rate.'
              'Set this flag to perform LRFinder test.')
@@ -144,6 +149,7 @@ def parse_arguments(argv):
 
 def test(model, criterion, test_dataset, batch_size, device,
          return_matrix=False):
+
     """Test an SER model.
 
     Parameters
@@ -207,12 +213,20 @@ def test(model, criterion, test_dataset, batch_size, device,
     
 
 
-def train(dataloader, params, save_path=None):
+def train(dataloader, params, save_label='default'):
 
-    #get dataloader
+    #get dataset
     train_dataset = dataloader.get_train_dataset()
+    train_loader = torch.utils.data.DataLoader(train_dataset, 
+                                batch_size=params['batch_size'], 
+                                shuffle=params['shuffle'])
+
     val_dataset = dataloader.get_val_dataset()
     test_dataset = dataloader.get_test_dataset()
+    
+
+    #setup Tensorboard
+    #writer = SummaryWriter('runs/'+save_label)
     
     #select device
     if params['use_gpu'] == 1:
@@ -241,7 +255,15 @@ def train(dataloader, params, save_path=None):
                             pretrained=pretrained).to(device)
     else:
         raise ValueError('No model found!')
+    
+    #trainloader = torch.utils.data.DataLoader(train_dataset, 
+    #                            batch_size=params['batch_size'], 
+    #                            shuffle=params['shuffle'])
+    #dataiter = iter(trainloader)
+    #data, labels = dataiter.next()
 
+    #writer.add_graph(model,data)
+    #writer.close()
     print(model.eval())
     print('\n')
 
@@ -262,7 +284,7 @@ def train(dataloader, params, save_path=None):
     acc_format2 = "{:.02f}"
     best_val_wa = 0
     #best_val_ua = 0
-    #save_path = params['save_model']
+    save_path = 'models/' + save_label + '.pth'
 
     all_train_loss =[]
     all_train_wa =[]
@@ -270,11 +292,12 @@ def train(dataloader, params, save_path=None):
     all_val_loss=[]
     all_val_wa=[]
     all_val_ua=[]
+    mixup = params['mixup']
     
     for epoch in range(params['num_epochs']):
-        train_loader = torch.utils.data.DataLoader(train_dataset, 
-                                batch_size=params['batch_size'], 
-                                shuffle=params['shuffle'])
+        #train_loader = torch.utils.data.DataLoader(train_dataset, 
+        #                        batch_size=params['batch_size'], 
+        #                        shuffle=params['shuffle'])
         
         #get current learning rate
         for param_group in optimizer.param_groups:
@@ -296,11 +319,26 @@ def train(dataloader, params, save_path=None):
             train_data_batch = train_data_batch.to(device)
             train_labels_batch = train_labels_batch.to(device,dtype=torch.long)
             
-            # Forward pass
-            preds = model(train_data_batch)
+            
+            if mixup == True:
+                # Mixup
+                inputs, targets_a, targets_b, lam = mixup_data(train_data_batch, 
+                        train_labels_batch, 0.2, use_cuda=torch.cuda.is_available())
+                # Forward pass
+                preds = model(inputs)
+
+                # Loss
+                loss_func = mixup_criterion(targets_a, targets_b, lam)
+                train_loss = loss_func(criterion, preds)
+                
+            else:
+                # Forward pass
+                preds = model(train_data_batch)
+
+                # Loss
+                train_loss = criterion(preds, train_labels_batch)
             
             # Compute the loss, gradients, and update the parameters
-            train_loss = criterion(preds, train_labels_batch)
             total_loss += train_loss.item()
             train_loss.backward()
             optimizer.step()
@@ -309,7 +347,6 @@ def train(dataloader, params, save_path=None):
             train_preds.append(torch.argmax(f.log_softmax(preds,dim=1), dim=1).detach().cpu().numpy())
             target.append(train_labels_batch.cpu().numpy())
 
-    
         # Evaluate training data
         train_loss = total_loss / (i+1)
         train_preds = np.concatenate(train_preds)
@@ -345,7 +382,20 @@ def train(dataloader, params, save_path=None):
         all_val_loss.append(loss_format.format(val_loss))
         all_val_wa.append(acc_format2.format(val_wa))
         all_val_ua.append(acc_format2.format(val_ua))
-
+        """
+        # Plot in tensorboard
+        writer.add_scalars('Loss',
+                            {'train':train_loss,
+                             'val':val_loss},
+                            epoch + 1)
+        
+        writer.add_scalars('Accuracy',
+                            {'WA_train':train_wa,
+                             'WA_val':val_wa,
+                             'UA_train':train_ua,
+                             'UA_val':val_ua},
+                            epoch + 1)
+        """
         print(f"Epoch {epoch+1}  (lr = {current_lr})\
         	Loss: {loss_format.format(train_loss)} - {loss_format.format(val_loss)} - WA: {acc_format.format(train_wa)} - {acc_format.format(val_wa)} <{acc_format.format(best_val_wa)}> - UA: {acc_format.format(train_ua)} - {acc_format.format(val_ua)} <{acc_format.format(best_val_ua)}>")
 
@@ -385,6 +435,38 @@ def lr_range_test(model, optimizer, criterion, train_dataset, val_dataset, param
     lr_finder.range_test(trainloader, val_loader=val_loader, start_lr = 0.00001, end_lr=1, num_iter=100)
     lr_finder.plot(log_lr=False)
     lr_finder.reset()
+
+
+# seeding function for reproducibility
+def seed_everything(seed):
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    #torch.backends.cudnn.deterministic = True
+
+
+def mixup_data(x, y, alpha=1.0, use_cuda=True):
+
+    '''Compute the mixup data. Return mixed inputs, pairs of targets, and lambda'''
+    if alpha > 0.:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1.
+    batch_size = x.size()[0]
+    if use_cuda:
+        index = torch.randperm(batch_size).cuda()
+    else:
+        index = torch.randperm(batch_size)
+
+    mixed_x = lam * x + (1 - lam) * x[index,:]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+
+
+def mixup_criterion(y_a, y_b, lam):
+    return lambda criterion, pred: lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
 if __name__ == '__main__':
     main(parse_arguments(sys.argv[1:]))

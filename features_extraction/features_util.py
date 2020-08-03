@@ -9,173 +9,32 @@ from tqdm import tqdm
 from pysndfx import  AudioEffectsChain
 
 
-
-def get_utterance_files(dataset, dataset_dir):
-
-    if dataset == 'IEMOCAP':
-        return get_IEMOCAP_files(dataset_dir)
-    elif dataset == 'emoDB':
-        return get_emoDB_files(dataset_dir)
-    else:
-        raise ValueError(f'{dataset} features extraction not implemented!')
-
-
-def extract_data(dataset, dataset_dir, features, emot_map, speaker_files, params):
+def extract_features(speaker_files, features, params):
     
-    if dataset == 'IEMOCAP':
-        return extract_IEMOCAP_features(dataset_dir, features, speaker_files,
-                                        emot_map, params)
-    elif dataset == 'emoDB':
-        return extract_emoDB_features(dataset_dir, features, speaker_files,
-                                        emot_map, params)
-    else:
-        raise ValueError(f'{dataset} features extraction not implemented!')
-    
-
-def get_IEMOCAP_files(dataset_dir):
-    """
-    IEMOCAP dataset contains data from 10 actors, 5 male and 5 female,
-    during their affective dyadic interaction. The database consists of
-    5 sessions, containing both improvised and scripted sessions. Each session
-    consists of 2 unique speakers: 1 male and 1 female.
-
-    For each session, the utterances are organized into conversation folders
-        eg. Ses01F_impro01/                     -> improvised conversation 01 of Session 01
-                |-- Ses01F_impro01_F000.wav     -> speaker F, utterance 000
-                |-- Ses01F_impro01_M000.wav     -> speaker M, utterance 000
-                |-- ...
-
-    This function extract utterance filenames and labels for improvised sessions,
-    organized into dictionary of {'speakerID':[(conversation_wavs,lab),(wavs,lab),...,(wavs,lab)]}
-
-        > speakerID eg. 1M: Session 1, Male speaker
-    
-    Database Reference:
-        (2008). IEMOCAP: Interactive emotional dyadic motion capture database. 
-        Language Resources and Evaluation.
-    
-    Authors:
-        Busso, Carlos
-        Bulut, Murtaza
-        Lee, Chi-Chun
-        Kazemzadeh, Abe
-        Mower, Emily
-        Kim, Samuel
-        Chang, Jeannette
-        Lee, Sungbok
-        Narayanan, Shrikanth
-    
-    Download request link:
-        https://sail.usc.edu/iemocap/iemocap_release.htm
-    """
-
-    sessions = ['Session1', 'Session2','Session3','Session4','Session5']
-    
-    speaker_files = defaultdict()
-    for session_name in os.listdir(dataset_dir):
-        
-        if session_name not in sessions:
-            continue
-        wav_dir = os.path.join(dataset_dir, session_name, "sentences/wav")
-        lab_dir = os.path.join(dataset_dir, session_name, "dialog/EmoEvaluation")
-        session_num = session_name[7]
-
-        M_wav, F_wav = list(), list()
-        M_lab, F_lab = list(), list()
-        for conversation_folder in os.listdir(wav_dir):
-        
-            # Only use improvised data, for example ".../wav/Ses01F_impro01"
-            if conversation_folder[7:12] != "impro":
-                continue
-            
-            # Path to the directory containing all the *.wav files of the
-            # current conversation
-            conversation_dir = os.path.join(wav_dir, conversation_folder)
-            
-            # Path to the labels of the current conversation
-            label_path = os.path.join(lab_dir, conversation_folder + ".txt")
-            
-            # Get a list of paths to all *.wav files
-            wav_files = []
-            for wav_name in os.listdir(conversation_dir):
-                #omit hidden folders
-                if wav_name.startswith('.'):
-                    continue
-                #omit non .wav files
-                name, ext = os.path.splitext(wav_name)
-                if ext != ".wav":
-                    continue
-                
-                wav_files.append(os.path.join(conversation_dir, wav_name))
-            
-            #separate into individual speakers
-            F_wav.append([path for path in wav_files if path[-8] == "F"])
-            F_lab.append(label_path)
-            M_wav.append([path for path in wav_files if path[-8] == "M"])
-            M_lab.append(label_path)
-            
-        #Put speaker utterance and label paths into dictionary
-        speaker_files[session_num+'M'] = (M_wav, M_lab)
-        speaker_files[session_num+'F'] = (F_wav, F_lab)
-
-    return speaker_files
-
-
-def extract_IEMOCAP_features(dataset_dir, features, speaker_files,
-                             emot_map, params):
-    
-    emotions = emot_map.keys()
     speaker_features = defaultdict()
     for speaker_id in tqdm(speaker_files.keys()):
         
-        wav_paths = speaker_files[speaker_id][0]
-        lab_paths = speaker_files[speaker_id][1]
-        assert len(wav_paths) == len(lab_paths)
         data_tot, labels_tot, labels_segs_tot, segs = list(), list(), list(), list()
 
-        for wav_files, label_path in zip(wav_paths, lab_paths):
+        for wav_path, emotion in speaker_files[speaker_id]:
             
-            # Get labels of all utterance in the current conversation
-            labels = dict() 
-            with open(label_path, "r") as fin:
-                for line in fin:
-                    # If this line is sth like
-                    # [6.2901 - 8.2357]	Ses01F_impro01_F000	neu	[2.5000, 2.5000, 2.5000]
-                    if line[0] == "[":
-                        t = line.split()
-                        # For e.g., {"Ses01F_impro01_F000": "neu", ...}
-                        labels[t[3]] = t[4]
+            # Read wave data
+            x, sr = librosa.load(wav_path, sr=None)
 
-            # Read all *.wav files of the current conversation and extract the 
-            #   required features
-            for wav_path in wav_files:
-                # Get name
-                _, wav_name = os.path.split(wav_path)
-                wav_name, _ = os.path.splitext(wav_name)
-                
-                # Only extract the required emotion classes
-                emotion = labels[wav_name]
-                if emotion not in emotions:
-                    continue
-                emotion = emot_map[emotion]
-                
-                # Read wave data
-                x, sr = librosa.load(wav_path, sr=None)
+            # Apply pre-emphasis filter
+            x = librosa.effects.preemphasis(x, zi = [0.0])
 
-                # Apply pre-emphasis filter
-                x = librosa.effects.preemphasis(x, zi = [0.0])
+            # Extract required features into (C,F,T)
+            features_data = GET_FEATURES[features](x, sr, params)
 
-                # Extract required features into (C,F,T)
-                features_data = GET_FEATURES[features](x, sr, params)
+            # Segment features into (N,C,F,T)
+            features_segmented = segment_nd_features(features_data, emotion, params['segment_size'])
 
-                # Segment features into (N,C,F,T)
-                features_segmented = segment_nd_features(features_data, emotion, params['segment_size'])
-
-                #Collect all the segments
-                data_tot.append(features_segmented[1])
-                labels_tot.append(features_segmented[3])
-                labels_segs_tot.extend(features_segmented[2])
-                segs.append(features_segmented[0])
+            #Collect all the segments
+            data_tot.append(features_segmented[1])
+            labels_tot.append(features_segmented[3])
+            labels_segs_tot.extend(features_segmented[2])
+            segs.append(features_segmented[0])
 
         # Post process
         data_tot = np.vstack(data_tot).astype(np.float32)
@@ -193,12 +52,6 @@ def extract_IEMOCAP_features(dataset_dir, features, speaker_files,
     assert len(speaker_features) == len (speaker_files)
 
     return speaker_features
-
-
-def get_emoDB_files(dataset_dir):
-
-    return None #[f"{dataset_dir}/emoDB wav"], ['emoDB lab']
-
 
 def extract_logspec(x, sr, params):
     

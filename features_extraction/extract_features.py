@@ -3,16 +3,13 @@ import sys
 import argparse
 import numpy as np
 import pickle
-from features_util import get_utterance_files, extract_data
+from features_util import extract_features
 from collections import Counter
 import pandas as pd
+from database import SER_DATABASES
 
 
 def main(args):
-    # Map emotions with integer labels
-    #emot_map = {"ang": 0, "sad": 1, "hap": 2, "exc": 2, "neu": 3}
-    # Emotion classes to be extracted
-    emot_map = {"ang": 0, "sad": 1, "hap": 2, "neu": 3}
     
     #Get spectrogram parameters
     params={'window'        : args.window,
@@ -27,6 +24,7 @@ def main(args):
     dataset  = args.dataset
     features = args.features
     dataset_dir = args.dataset_dir
+    emo_classes = ['ang','sad','hap','neu']
     if args.save_dir is not None:
         out_filename = args.save_dir+dataset+'_'+args.save_label+'.pkl'
     else:
@@ -44,15 +42,16 @@ def main(args):
         print(f'\t{key:>15}: {params[key]}')
     print('\n')
 
-    #get utterance and label filenames, organized into dictionary
-    #   {speaker_id:([utterance_wav_filenames], [label_filenames])}
-    speaker_files = get_utterance_files(dataset, dataset_dir)
+    #Initialize database
+    database = SER_DATABASES[dataset](dataset_dir, emo_classes=emo_classes)
+
+    #Get file paths and label in database
+    speaker_files = database.get_files()
+
+    #Extract features
+    features_data = extract_features(speaker_files, features, params)
     
-    #extract features to dictionary 
-    #   {speakerID: (data_tot, labels_tot, labels_segs_tot, segs)}
-    features_data = extract_data(dataset, dataset_dir, features, emot_map, speaker_files, params)
-   
-    #save features
+    #Save features
     if args.save_dir is not None:
         
         with open(out_filename, "wb") as fout:
@@ -73,12 +72,13 @@ def main(args):
         data_shape.append(str(features_data[speaker][0].shape))
     class_dist = np.array(class_dist)
     
-    class_dist_f = pd.DataFrame({"speaker": speakers,
-                                 "shape (N,C,F,T)": data_shape,
-                                 "ang": class_dist[:,0],
-                                 "sad": class_dist[:,1],
-                                 "hap": class_dist[:,2],
-                                 "neu": class_dist[:,3]})
+    df = {"speaker": speakers,
+          "shape (N,C,F,T)": data_shape}
+    classes = database.get_classes()
+    for c in range(class_dist.shape[1]):
+        df[classes[c]] = class_dist[:,c]
+    
+    class_dist_f = pd.DataFrame(df)
     class_dist_f = class_dist_f.to_string(index=False) 
     print(class_dist_f)
      
@@ -140,6 +140,16 @@ def parse_arguments(argv):
         help='Label to save the feature')
 
     return parser.parse_args(argv)
+
+
+# seeding function for reproducibility
+def seed_everything(seed):
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    np.random.seed(seed)
+    #torch.manual_seed(seed)
+    #torch.cuda.manual_seed(seed)
+    #torch.backends.cudnn.deterministic = True
+
 
 
 if __name__ == '__main__':

@@ -90,6 +90,7 @@ class SER_FCN_Attention(nn.Module):
     def __init__(self,num_classes=4, dropout=0.2, in_ch=3, fcsize=256, pretrained=True):
         super(SER_FCN_Attention, self).__init__()
 
+        #self.inputnet = nn.Conv2d(in_ch, 3, kernel_size=(11,11),stride=(1,1), padding=(5,5))
         #Use AlexNet from pyTorch
         alexnet = torchvision.models.alexnet(pretrained=pretrained)
         
@@ -191,7 +192,9 @@ class SER_AlexNet(nn.Module):
         super(SER_AlexNet, self).__init__()  
 
         model = torchvision.models.alexnet(pretrained=pretrained)
-        model.features[0] = nn.Conv2d(in_ch, 64, kernel_size=(11, 11), stride=(4, 4), padding=(2, 2))
+        
+        if in_ch != 3:
+            model.features[0] = nn.Conv2d(in_ch, 64, kernel_size=(11, 11), stride=(4, 4), padding=(2, 2))
         
         if fcsize != 4096:
             model.classifier[4] = nn.Linear(4096, fcsize)
