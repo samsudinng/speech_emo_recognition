@@ -57,7 +57,7 @@ for repeat in range(repeat_kfold):
 
         stat = train_ser.main(parse_arguments(sys.argv[1:]))   
         all_stat.append(stat)       
-        os.remove('models/'+save_label+'.pth')
+        os.remove(save_label+'.pth')
     
 
 
