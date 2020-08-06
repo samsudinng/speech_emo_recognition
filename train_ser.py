@@ -284,7 +284,7 @@ def train(dataloader, params, save_label='default'):
     acc_format2 = "{:.02f}"
     best_val_wa = 0
     #best_val_ua = 0
-    save_path = 'models/' + save_label + '.pth'
+    save_path = save_label + '.pth'
 
     all_train_loss =[]
     all_train_wa =[]
