@@ -11,8 +11,8 @@ import albumentations as A
 import random
 from tqdm import tqdm
 
-SCALER_TYPE = {'standard':preprocessing.StandardScaler,
-               'minmax'  :preprocessing.MinMaxScaler
+SCALER_TYPE = {'standard':'preprocessing.StandardScaler()',
+               'minmax'  :'preprocessing.MinMaxScaler(feature_range=(0,1))'
               }
 
 
@@ -151,7 +151,7 @@ class TestLoader(torch.utils.data.Dataset):
             start = end
             end = start + self.num_segs[v]
             
-            preds[v] = np.max(seg_preds[start:end], axis=0)
+            preds[v] = np.average(seg_preds[start:end], axis=0)
             
         preds = np.argmax(preds, axis=1)
         return preds
@@ -295,7 +295,9 @@ class DatasetLoader:
         
         if augment == True:
             #perform training data augmentation
-            self.train_data, self.train_labels = data_augment(train_data, train_labels)
+            self.train_data, self.train_labels = data_augment(train_data, train_labels,
+                                                                concat_ori=True)
+            #self.train_labels = train_labels
         else:
             self.train_data = train_data
             self.train_labels = train_labels
@@ -321,6 +323,7 @@ class DatasetLoader:
         if oversample == True:
             print('\nPerform training dataset oversampling')
             datar, labelr = random_oversample(self.train_data, self.train_labels)
+            datar, labelr = random_oversample(datar,labelr)
             self.train_data = datar
             self.train_labels = labelr
         
@@ -365,7 +368,8 @@ class DatasetLoader:
         self.test_data  = rearrange(self.test_data)
         
         #scaler type
-        scaler = SCALER_TYPE[scaling]()
+        #scaler = SCALER_TYPE[scaling](eval(SCALER_ARGS[scaling]))
+        scaler = eval(SCALER_TYPE[scaling])
 
         for ch in range(nch):
             #get scaling values from training data
@@ -420,7 +424,7 @@ class DatasetLoader:
 
 def random_oversample(data, labels):
     print('\tOversampling method: Random Oversampling')
-    ros = RandomOverSampler(random_state=0)
+    ros = RandomOverSampler(random_state=0,sampling_strategy='minority')
 
     n_samples = data.shape[0]
     fh = data.shape[2]
@@ -437,33 +441,34 @@ def random_oversample(data, labels):
     return data_resampled, label_resampled
 
 
-def data_augment(data, label):
+def data_augment(data, label, concat_ori=False):
     """
     Perform data augmentation based on albumentations package.
     Transform pipeline:
         - Time masking
     """
-    aug_data, aug_label = None, None
-    data_and_label = zip(data, label)
-    #for i in tqdm(range(data.shape[0]), desc='Data Augmentation'):
-    for spec, spec_label in tqdm(data_and_label, desc='Data Augmentation'):
+    aug_data = None
+    
+    
+    for spec in tqdm(data, desc='Data Augmentation'):
         #spec = data[i].copy().squeeze(axis=0)
         spec = spec.squeeze(axis=0)
         spec_aug = spec_augment(spec, num_mask=1, time_masking_max_percentage=0.25 )
         spec_aug = np.expand_dims(spec_aug, axis=0)
         if aug_data is None:
             aug_data = spec_aug
-            aug_label= spec_label
         else:
             aug_data = np.vstack((aug_data, spec_aug))
-            aug_label = np.append(aug_label, spec_label)
     
-    #append augmented data to training data
     aug_data = np.expand_dims(aug_data, axis=1)
-    data = np.vstack((data,aug_data))
-    label= np.append(label,aug_label)
 
-    return data, label
+    if concat_ori == True:
+        return np.concatenate((data, aug_data), axis=0), np.concatenate((label,label), axis=None)
+    
+    else:
+        return aug_data, label
+    
+    #return aug_data
 
 def spec_augment(spec: np.ndarray, num_mask=0, 
                  freq_masking_max_percentage=0.0, time_masking_max_percentage=0.0):

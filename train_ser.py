@@ -4,13 +4,15 @@ import pickle
 from data_utils import DatasetLoader
 import torch
 import numpy as np
-from model import SER_AlexNet, SER_FCN_Attention
+from model import SER_AlexNet, SER_AlexNet_Attention, SER_FCN_Attention
 import torch.nn as nn
 import torch.optim as optim
 from torch_lr_finder import LRFinder
 import torch.nn.functional as f
 import os
 import random
+from collections import Counter
+from torch.backends import cudnn
 #from torch.utils.tensorboard import SummaryWriter
 
 
@@ -248,6 +250,12 @@ def train(dataloader, params, save_label='default'):
                                   in_ch=num_in_ch,
                                   fcsize=params['fcsize'],
                                   pretrained=pretrained).to(device)
+    elif ser_model == 'alexnet_attention':
+        model = SER_AlexNet_Attention(num_classes=num_classes,
+                                  dropout=params['dropout'],
+                                  in_ch=num_in_ch,
+                                  fcsize=params['fcsize'],
+                                  pretrained=pretrained).to(device)
     elif ser_model == 'alexnet':
         model = SER_AlexNet(num_classes=num_classes,
                             in_ch=num_in_ch,
@@ -283,7 +291,7 @@ def train(dataloader, params, save_label='default'):
     acc_format = "{:.02f}%"
     acc_format2 = "{:.02f}"
     best_val_wa = 0
-    #best_val_ua = 0
+    best_val_ua = 0
     save_path = save_label + '.pth'
 
     all_train_loss =[]
@@ -295,9 +303,6 @@ def train(dataloader, params, save_label='default'):
     mixup = params['mixup']
     
     for epoch in range(params['num_epochs']):
-        #train_loader = torch.utils.data.DataLoader(train_dataset, 
-        #                        batch_size=params['batch_size'], 
-        #                        shuffle=params['shuffle'])
         
         #get current learning rate
         for param_group in optimizer.param_groups:
@@ -311,7 +316,7 @@ def train(dataloader, params, save_label='default'):
         for i, batch in enumerate(train_loader):
             
             train_data_batch, train_labels_batch = batch
-            
+
             # Clear gradients
             optimizer.zero_grad()
             
@@ -323,7 +328,9 @@ def train(dataloader, params, save_label='default'):
             if mixup == True:
                 # Mixup
                 inputs, targets_a, targets_b, lam = mixup_data(train_data_batch, 
-                        train_labels_batch, 0.2, use_cuda=torch.cuda.is_available())
+                        train_labels_batch, 0.2, use_cuda=torch.cuda.is_available(),
+                        concat_ori=False)
+                
                 # Forward pass
                 preds = model(inputs)
 
@@ -344,26 +351,26 @@ def train(dataloader, params, save_label='default'):
             optimizer.step()
             
             # Accumulate batch results
-            train_preds.append(torch.argmax(f.log_softmax(preds,dim=1), dim=1).detach().cpu().numpy())
-            target.append(train_labels_batch.cpu().numpy())
+            #train_preds.append(torch.argmax(f.log_softmax(preds,dim=1), dim=1).detach().cpu().numpy())
+            #target.append(train_labels_batch.cpu().numpy())
 
         # Evaluate training data
         train_loss = total_loss / (i+1)
-        train_preds = np.concatenate(train_preds)
-        target = np.concatenate(target)
-        train_wa = train_dataset.weighted_accuracy(train_preds, target) * 100
-        train_ua = train_dataset.unweighted_accuracy(train_preds, target) * 100
+        #train_preds = np.concatenate(train_preds)
+        #target = np.concatenate(target)
+        #train_wa = train_dataset.weighted_accuracy(train_preds, target) * 100
+        #train_ua = train_dataset.unweighted_accuracy(train_preds, target) * 100
 
         #print(loss_format.format(train_loss))
         all_train_loss.append(loss_format.format(train_loss))
-        all_train_wa.append(acc_format2.format(train_wa))
-        all_train_ua.append(acc_format2.format(train_ua))
+        #all_train_wa.append(acc_format2.format(train_wa))
+        #all_train_ua.append(acc_format2.format(train_ua))
 
         #Validation
         with torch.no_grad():
             val_result = test(
                 model, criterion, val_dataset, 
-                batch_size=params['batch_size'],
+                batch_size=64, #params['batch_size'],
                 device=device)
         
             val_loss = val_result[0]
@@ -396,22 +403,40 @@ def train(dataloader, params, save_label='default'):
                              'UA_val':val_ua},
                             epoch + 1)
         """
+        #print(f"Epoch {epoch+1}  (lr = {current_lr})\
+        #	Loss: {loss_format.format(train_loss)} - {loss_format.format(val_loss)} - WA: {acc_format.format(train_wa)} - {acc_format.format(val_wa)} <{acc_format.format(best_val_wa)}> - UA: {acc_format.format(train_ua)} - {acc_format.format(val_ua)} <{acc_format.format(best_val_ua)}>")
         print(f"Epoch {epoch+1}  (lr = {current_lr})\
-        	Loss: {loss_format.format(train_loss)} - {loss_format.format(val_loss)} - WA: {acc_format.format(train_wa)} - {acc_format.format(val_wa)} <{acc_format.format(best_val_wa)}> - UA: {acc_format.format(train_ua)} - {acc_format.format(val_ua)} <{acc_format.format(best_val_ua)}>")
+        	Loss: {loss_format.format(train_loss)} - {loss_format.format(val_loss)} - WA: {acc_format.format(val_wa)} <{acc_format.format(best_val_wa)}> - UA: {acc_format.format(val_ua)} <{acc_format.format(best_val_ua)}>")
 
     # Test on best model
     with torch.no_grad():
         model.load_state_dict(torch.load(save_path))
+
+        #run validation once more to make sure model saved and loaded correctly
+        val_result = test(
+                model, criterion, val_dataset, 
+                batch_size=1, #params['batch_size'],
+                device=device)
+        
+        val_loss = val_result[0]
+        val_wa = val_result[1]
+        val_ua = val_result[2]
+
+
         test_result, confusion_matrix = test(
             model, criterion, test_dataset, 
-            batch_size=params['batch_size'],
+            batch_size=1, #params['batch_size'],
             device=device, return_matrix=True)
 
         print("*" * 40)
         print("RESULTS ON TEST SET:")
         print("Loss:{:.4f}\tWA: {:.2f}\tUA: "
               "{:.2f}".format(test_result[0], test_result[1], test_result[2]))
-        print("Confusion matrix:\n{}".format(confusion_matrix[1]))    
+        print("Confusion matrix:\n{}".format(confusion_matrix[1]))   
+        print(f'\n\nRE_VALIDATION') 
+        print("Loss:{:.4f}\tWA: {:.2f}\tUA: "
+              "{:.2f}".format(val_loss, val_wa, val_ua))
+        
 
     return(all_train_loss, all_train_wa, all_train_ua,
             all_val_loss, all_val_wa, all_val_ua,
@@ -444,10 +469,11 @@ def seed_everything(seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    #torch.backends.cudnn.deterministic = True
+    cudnn.benchmark=True
+    cudnn.deterministic = True
 
 
-def mixup_data(x, y, alpha=1.0, use_cuda=True):
+def mixup_data(x, y, alpha=1.0, use_cuda=True, concat_ori=False):
 
     '''Compute the mixup data. Return mixed inputs, pairs of targets, and lambda'''
     if alpha > 0.:
@@ -462,6 +488,12 @@ def mixup_data(x, y, alpha=1.0, use_cuda=True):
 
     mixed_x = lam * x + (1 - lam) * x[index,:]
     y_a, y_b = y, y[index]
+
+    if concat_ori == True:
+        mixed_x = torch.cat([x, mixed_x])
+        y_a = torch.cat([y, y_a])
+        y_b = torch.cat([y, y_b])
+
     return mixed_x, y_a, y_b, lam
 
 

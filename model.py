@@ -2,6 +2,21 @@ import torch.nn as nn
 import torch
 import torchvision
 
+def init_layer(layer):
+    """Initialize a Linear or Convolutional layer. """
+    nn.init.xavier_uniform_(layer.weight)
+ 
+    if hasattr(layer, 'bias'):
+        if layer.bias is not None:
+            layer.bias.data.fill_(0.)
+            
+    
+def init_bn(bn):
+    """Initialize a Batchnorm layer. """
+    bn.bias.data.fill_(0.)
+    bn.weight.data.fill_(1.)
+
+
 '''
 2 Models Available:
    - SER_AlexNet   : AlexNet model from pyTorch
@@ -27,6 +42,8 @@ class Attention(nn.Module):
         self.tanh = nn.Tanh()
         self.softmax = nn.Softmax(dim=1)
 
+        self._init_weights()
+
     def forward(self, x):
         dims=x.size()
         x = x.reshape(dims[0],-1, dims[-1])
@@ -40,11 +57,13 @@ class Attention(nn.Module):
         v = self.softmax(v)
         v = v.unsqueeze(-1)
         
-        output = (x*v).sum(axis=1)
-        
+        output = (x*v).sum(axis=1)    
         
         return output
-      
+
+    def _init_weights(self):
+        init_layer(self.linear1) 
+        init_layer(self.linear2) 
 
 class SER_FCN_Attention(nn.Module):
     """
@@ -127,9 +146,12 @@ class SER_FCN_Attention(nn.Module):
         #Output classifier
         self.classifier = nn.Sequential(
             nn.Linear(in_features=256, out_features=fcsize),
+            nn.BatchNorm1d(num_features=fcsize),
             nn.ReLU(inplace=True),
             nn.Dropout(p=dropout),
             nn.Linear(in_features=fcsize, out_features=num_classes))
+
+        self._init_weights(in_ch=in_ch)
 
         print('\n<< SER FCN_Attention model initialized >>\n')
 
@@ -146,6 +168,112 @@ class SER_FCN_Attention(nn.Module):
         out = self.classifier(x)
         
         return out
+    
+    def _init_weights(self, in_ch=3):
+        init_bn(self.alexnet_conv[0])
+        init_bn(self.alexnet_conv[2])
+        init_bn(self.alexnet_conv[6])
+        init_bn(self.alexnet_conv[10])
+        init_bn(self.alexnet_conv[13])
+        init_bn(self.alexnet_conv[16])
+        init_layer(self.classifier[0])
+        init_bn(self.classifier[1])
+        init_layer(self.classifier[4])
+
+        if in_ch != 3:
+            init_layer(self.alexnet_conv[1])
+
+
+
+class SER_AlexNet_Attention(nn.Module):
+    """
+    Reference: "Attention Based Fully Convolutional Network for Speech Emotion Recognition"
+    Authors: Yuanyuan Zhang and
+             Jun Du and
+             Zirui Wang and
+             Jianshu Zhang and
+             Yanhui Tu.
+
+    Fully-Convolutional model with Attention. The convolution layer is taken from AlexNet.
+
+    Parameters
+    ----------
+    num_classes : int
+    in_ch       : int
+        Default AlexNet input channels is 3. Set this parameters for different
+            numbers of input channels.
+    pretrained  : bool
+        To initialize the weight of the convolutional layer. 
+        True initializes with AlexNet pre-trained weights.
+    fcsize      : int
+        The size of linear layer between Attention and output layer
+    dropout     : float
+        The dropout rate for linear layer between Attention and output layer
+    
+    Input
+    -----
+    Input dimension (N,C,H,W)
+
+    N   : batch size
+    C   : channels
+    H   : Height
+    W   : Width
+
+    Output
+    ------
+    logits (before Softmax)
+
+    """
+
+
+    def __init__(self,num_classes=4, dropout=0.2, in_ch=3, fcsize=256, pretrained=True):
+        super(SER_AlexNet_Attention, self).__init__()
+
+        #Feature layer
+        alexnet = torchvision.models.alexnet(pretrained=pretrained)
+        
+        if in_ch != 3:
+            alexnet.features[0] = nn.Conv2d(in_ch, 64, kernel_size=(11, 11), stride=(4, 4), padding=(2, 2))
+        self.alexnet_conv = alexnet.features
+        
+
+        #Attention layer
+        self.attention = Attention(n_channels=256)
+        
+        #Output classifier
+        self.classifier = nn.Sequential(
+            nn.Linear(in_features=256, out_features=fcsize),
+            nn.BatchNorm1d(num_features=fcsize),
+            nn.ReLU(inplace=True),
+            nn.Dropout(p=dropout),
+            nn.Linear(in_features=fcsize, out_features=num_classes))
+
+        self._init_weights(in_ch=in_ch)
+
+        print('\n<< SER AlexNet_Attention model initialized >>\n')
+
+    def forward(self, x):
+        
+        #Features layer
+        x = self.alexnet_conv(x)
+        
+        #Attention layer
+        x = x.permute([0,2,3,1]) #move channel to last dimension
+        x = self.attention(x)
+        
+        #Classifier layer
+        out = self.classifier(x)
+        
+        return out
+    
+    def _init_weights(self, in_ch=3):
+        
+        init_layer(self.classifier[0])
+        init_bn(self.classifier[1])
+        init_layer(self.classifier[4])
+
+        if in_ch != 3:
+            init_layer(self.alexnet_conv[0])
 
 
 class SER_AlexNet(nn.Module):
@@ -192,16 +320,33 @@ class SER_AlexNet(nn.Module):
         super(SER_AlexNet, self).__init__()  
 
         model = torchvision.models.alexnet(pretrained=pretrained)
+        #print(model.features[0].weight[15])
         
         if in_ch != 3:
             model.features[0] = nn.Conv2d(in_ch, 64, kernel_size=(11, 11), stride=(4, 4), padding=(2, 2))
-        
+            #init_layer(model.features[0])
+
+        #print(model.features[0].weight[0][0])    
+
+        model.classifier[6] = nn.Linear(4096, num_classes)
+        #init_layer(model.classifier[6])
+
+        self._init_weights(model, pretrained=pretrained)
+       
+
+        #print(model.features[0].weight[15])
+
+        """
         if fcsize != 4096:
             model.classifier[4] = nn.Linear(4096, fcsize)
-            model.classifier[6] = nn.Linear(fcsize, num_classes)   
+            model.classifier[6] = nn.Linear(fcsize, num_classes)  
+            init_layer(model.classifier[4]) 
+            init_layer(model.classifier[6])
+
         else:
-            model.classifier[6] = nn.Linear(4096, num_classes)   
-        
+            model.classifier[6] = nn.Linear(4096, num_classes) 
+            init_layer(model.classifier[6]) 
+        """
         self.alexnet = model
         
         print('\n<< SER AlexNet model initialized >>\n')
@@ -211,5 +356,18 @@ class SER_AlexNet(nn.Module):
         out = self.alexnet(x)
 
         return out
+
+    def _init_weights(self, model, pretrained=True):
+
+        init_layer(model.features[0])
+        init_layer(model.classifier[6])
+        if pretrained == False:
+            init_layer(model.features[3])
+            init_layer(model.features[6])
+            init_layer(model.features[8])
+            init_layer(model.features[10])
+            init_layer(model.classifier[1])
+            init_layer(model.classifier[4])
+       
 
 
