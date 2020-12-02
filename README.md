@@ -1,13 +1,13 @@
-# Speech Emotion Recognition (SER) Framework with PyTorch
+# Speech Emotion Recognition (SER) with Pre-trained Image Classifier - PyTorch Implementation
 
-PyTorch implementation of __Fully-Convolutional Network with Attention (FCN+Attention)__ SER model. It is the topic of my project as part of my post-graduate study (MSc. in AI, Nanyang Technological University, Singapore). As I was experimenting with the model and training framework, I added support for various dataset, features, models, tuning, and performance improvement techniques. It may hopefully serves as a framework for other SER model implementation, where new models can be plugged in, experimented and evaluated quickly.   
+This repository containts my works on speech emotion recognition using spectrogram of the utterances as input. Spectrogram contains time-frequency information which reflects the acoustic cues, including those from emotion. I formulated the task as image classification using pre-trained image classification network. I proposed two AlexNet-based models: __AlexNet Finetuning__ and __FCN+GAP__ (Fully-Convolutional Network with Global Average Pooling). These networks were finetuned for speech emotion recognition with __IEMOCAP__ emotion speech dataset. I also implemented two deep learning enhancement techniques based on __mixup augmentation__ and __stability training__. These enhancements aim to improve generalization and robustness of the models given unseen utterances and diverse acoustic environments. 
 
-I also included resources for SER, including publications, datasets, and useful python packages. These resources are collected during my research, implementation and optimization phase. 
+This is the topic of my project as part of my post-graduate study (MSc. in AI, Nanyang Technological University, Singapore). This repository also includes resources for SER, including publications, datasets, and useful python packages. These resources are collected during my research, implementation and optimization phase. 
 
 
 ## This Repository
 
-I implemented a fully-convolution network as my main model. It was inspired by the work of Zhang et. al. (2019) presented in [*Attention Based Fully Convolutional Network for Speech Emotion Recognition*](https://arxiv.org/abs/1806.01506). The model was based on [AlexNet](https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf), a CNN architecture designed for image classification. The following sections describes the structure and components of this framework.
+My approach was inspired by the work of Zhang et. al. (2019) presented in [*Attention Based Fully Convolutional Network for Speech Emotion Recognition*](https://arxiv.org/abs/1806.01506). The pretrained image classifier model was based on [AlexNet](https://papers.nips.cc/paper/4824-imagenet-classification-with-deep-convolutional-neural-networks.pdf), a CNN architecture designed for image classification. The following sections describes the structure and components of this framework.
 
 ### Features extraction
 
@@ -35,42 +35,68 @@ The spectrogram of each utterance is splitted into segments with length *T*. If 
 
 Three models are available in the framework:  
 
-1. __FCN+Attention__
-- AlexNet with the fully connected layers replaced with Attention layer and output layer.
-- Batchnorm layers are added at the input layer and at the output of each CNN layer.
-
-2. __AlexNet__ 
-- Finetuned to classify emotion from speech spectrograms. 
+1. __AlexNet Finetuning__ 
+- Pre-trained AlexNet, finetuned to classify emotion from speech spectrogram images (IEMOCAP). 
 - The model is based on *torchvision.models.alexnet* model in pyTorch.
+- Number of parameters = ~57m
+- Best model mean accuracy - Weighted Accuracy: 74.0%, Unweighted Accuracy: 64.4% (baseline + stability training)
 
-3. __3D Convolutional Recurrent Network with Attention (3D ACRNN)__
-- Based on the work of Chen et. al. (2018) presented in [*3-D Convolutional Recurrent Neural Networks With Attention Model for Speech Emotion Recognition*](https://www.researchgate.net/publication/326638635_3-D_Convolutional_Recurrent_Neural_Networks_With_Attention_Model_for_Speech_Emotion_Recognition) . 
-- TensorFlow implementation by the authors can be found [here](https://github.com/xuanjihe/speech-emotion-recognition).
-- pyTorch implementation by Hoang Nghia Tuyen can be found [here](https://github.com/NTU-SER/speech_utils). 
+2. __FCN+GAP__
+- Pre-trained AlexNet with the fully connected layers replaced with global average pooling (GAP).
+- Finetuned to classify emotion from speech spectrogram images (IEMOCAP)
+- Fully-connected layers are prone to over-fitting and require large number of parameters. GAP was proposed by Lin et. al. (2014) in [*Network In Network*] (https://arxiv.org/abs/1312.4400) to address these issues.
+- This model perform as well as AlexNet Finetuning but requiring only 4.5% as many parameters.
+- Number of parameters: ~2.5m 
+- Best model mean accuracy - Weighted Accuracy: 73.2%, Unweighted Accuracy: 62.6% (baseline)
+
 
 
 The model to be trained can be selected via command line with the following labels.
 
 |Model label|Model Name|
 |-----------|----------|
-|*'fcn_attention'*|FCN+Attention|
-|*'alex_net'*|AlexNet|
-|*'3d_acrnn'*|#3D ACRNN|
-
-### Training and Evaluation
+|*'alexnet'*|AlexNet Finetuning|
+|*'alexnet_gap'*|FCN+GAP|
 
 
 ------------------------------------
 ## Usage
 
+### Feature Extraction
+
+### Training/Finetuning
+The main training script is train_ser.py.
+
+
+python train_ser.py <*features_file*> --ser_model <*model*> --val_id <*vid*>
+ --test_id <*tid*> --num_epochs <*n*> --batch_size <*b*> --lr <*l*> --seed <*s*> --gpu <*g*> --save_label <*label*> *{additional flags}*
+ 
+ Example:
+ 
+ ```python
+python train_ser.py IEMOCAP_logspec200.pkl --ser_model alexnet --val_id 1F --test_id 1M --num_epochs 100 --batch_size 64 --lr 1e-3 --seed 111 --gpu 1 --save_label alexnet_baseline --pretrained --mixup
+ ```
+ 
+|Script Parameter|Remarks|
+|-----------|----------|
+|features_file|File containing the features (spectrogram) extracted from the speech utterance|
+|model|alexnet, alexnet_gap|
+|vid| the ID of the speaker to be used as validation set (see note)|
+|tid| the ID of the speaker to be used as test set (see note)|
+|g|0 (cpu), 1 (gpu)|
+|label|the best finetuned model will be save to label.pth|
+|additional flags|--pretrained (to use pre-trained model)|
+| | --mixup (to use mixup)|
+| | --oversampling (to use random dataset oversampling)|
+
+Note:
+- IEMOCAP database consists of 5 sessions * 2 speakers per session. The speakers (5 males, 5 females) have been assigned ID based on the session and gender {1F, 1M, 2F, 2M, 3F, 3M, 4F, 4M, 5F, 5M}
+
 ## Requirements
 
 ------------------------------------
-## SER Publications and Results
+## SER Publications
 
-### "Leaderboard"
-
-### Papers
 
 ------------------------------------
 ## SER Datasets
