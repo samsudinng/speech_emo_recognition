@@ -42,7 +42,7 @@ Two models are available in the framework:
 2. __FCN+GAP__
 - Pre-trained AlexNet with the fully connected layers replaced with global average pooling (GAP).
 - Finetuned to classify emotion from speech spectrogram images (IEMOCAP)
-- Fully-connected layers are prone to over-fitting and require large number of parameters. GAP was proposed by Lin et. al. (2014) in [*Network In Network*] (https://arxiv.org/abs/1312.4400) to address these issues.
+- Fully-connected layers are prone to over-fitting and require large number of parameters. GAP was proposed by Lin et. al. (2014) in [*Network In Network*](https://arxiv.org/abs/1312.4400) to address these issues.
 - This model perform as well as AlexNet Finetuning but requiring only 4.5% as many parameters.
 
 
