@@ -1,5 +1,5 @@
 import os
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 """
 The keys of the following dictionaries refer to specific emotion codenames
@@ -22,7 +22,7 @@ EMODB_EMO_CODES =   {'N': ['neu', 'neutral'],
                      'F': ['hap', 'happy', 'happiness'],
                      'T': ['sad', 'sadness'],
                      'W': ['angry','anger'],
-                     'L': ['bored, boredom'],
+                     'L': ['bored', 'boredom'],
                      'A': ['fea', 'fear'],
                      'E': ['dis', 'disgust', 'disgusted']}
 
@@ -64,38 +64,36 @@ class IEMOCAP_database():
         https://sail.usc.edu/iemocap/iemocap_release.htm
     """
 
-    def __init__(self, database_dir, emo_classes=['angry','sad','happy','neutral']):
+    def __init__(self, database_dir, emot_map = {'ang': 0, 'sad':1, 'hap':2, 'neu':3},
+                        include_scripted=False): 
         
         #Path
         self.database_dir = database_dir
 
-        #Emotion to label mapping
-        self.emot_map = self._map_emo_to_labels(emo_classes)
+        #Emotion to label mapping for features
+        self.emot_map = emot_map
 
         #IEMOCAP Session name
         self.sessions = ['Session1','Session2','Session3','Session4','Session5']
+
+        #IEMOCAP available emotion classes
+        self.all_emo_classes = IEMOCAP_EMO_CODES.keys()
+
+        #to include scripted session
+        self.include_scripted = include_scripted
 
     def get_speaker_id(self, session, gender):
 
         return session[-1]+gender
     
-    def _map_emo_to_labels(self, emo_classes):
-
-        emot_map = {}
-        for idx, emo in enumerate(emo_classes):
-            for emo_code, aliases in IEMOCAP_EMO_CODES.items():
-                if emo in aliases:
-                    emot_map[emo_code] = idx
-                    break
-        
-        assert len(emot_map) == len(emo_classes)
-        return emot_map
-
     def get_classes(self):
 
         classes={}
         for key,value in self.emot_map.items():
-            classes[value]=key
+            if value in classes.keys():
+                classes[value] += '+'+key
+            else:
+                classes[value] = key
         
         return classes
 
@@ -109,6 +107,7 @@ class IEMOCAP_database():
         emotions = self.emot_map.keys()
         dataset_dir = self.database_dir
         all_speaker_files = defaultdict()
+        total_num_files = 0
         for session_name in os.listdir(dataset_dir):
            
             if session_name not in self.sessions:
@@ -118,10 +117,14 @@ class IEMOCAP_database():
 
             M_wav, F_wav = list(), list()
             for conversation_folder in os.listdir(wav_dir):
-           
-                # Only use improvised data, for example ".../wav/Ses01F_impro01"
-                if conversation_folder[7:12] != "impro":
+                #omit hidden folders
+                if conversation_folder.startswith('.'):
                     continue
+
+                if self.include_scripted == False:
+                    # Only use improvised data, for example ".../wav/Ses01F_impro01"
+                    if conversation_folder[7:12] != "impro":
+                        continue
                 
                 # Path to the directory containing all the *.wav files of the
                 # current conversation
@@ -131,6 +134,7 @@ class IEMOCAP_database():
                 label_path = os.path.join(lab_dir, conversation_folder + ".txt")
                 labels = dict() 
                 with open(label_path, "r") as fin:
+                    #print(label_path)
                     for line in fin:
                         # If this line is sth like
                         # [6.2901 - 8.2357]	Ses01F_impro01_F000	neu	[2.5000, 2.5000, 2.5000]
@@ -167,6 +171,8 @@ class IEMOCAP_database():
             all_speaker_files[self.get_speaker_id(session_name,'M')] = M_wav
             all_speaker_files[self.get_speaker_id(session_name,'F')] = F_wav
 
+            total_num_files += len(M_wav) + len(F_wav)
+        print(f'\nNUMBER OF FILES: {total_num_files}\n')
         return all_speaker_files
 
 
@@ -188,30 +194,92 @@ class EMODB_database():
         Weiss, Benjamin 
     """
     
-    def __init__(self, database_dir, emo_classes=['angry','sad','happy','neutral']):
+    def __init__(self, database_dir, emot_map={'neutral':0,'happy':1,'sad':2,'angry':3,'bored':4,'fear':5,'disgust':6}):
         
         #Path
         self.database_dir = database_dir
 
         #Emotion to label mapping
-        self.emot_map = self._map_emo_to_labels(emo_classes)
+        self.emot_map = emot_map
+
+        self.all_emo_codes = EMODB_EMO_CODES
 
     
-    def _map_emo_to_labels(self, emo_classes):
+    def _get_speaker_id(self,speaker_code):
+        emodb_speaker_ids = {'03':'1M','08':'1F','09':'2F','10':'2M','11':'3M',
+                             '12':'4M','13':'3F','14':'4F','15':'5M','16':'5F'}
 
-        emot_map = {}
-        for idx, emo in enumerate(emo_classes):
-            for emo_code, aliases in EMODB_EMO_CODES.items():
-                if emo in aliases:
-                    emot_map[emo_code] = idx
-                    break
-        
-        assert len(emot_map) == len(emo_classes)
-        return emot_map
-        
+        return emodb_speaker_ids[speaker_code] 
+    
+    def get_classes(self):
 
+        classes={}
+        for key,value in self.emot_map.items():
+            if value in classes.keys():
+                classes[value] += '+'+key
+            else:
+                classes[value] = key
+        
+        return classes
+
+
+    def get_files(self):
+        
+        all_files =defaultdict(list)
+
+        #Get all filenames
+        filenames = []
+        for (dirpath, dirnames, fnames) in os.walk(self.database_dir):
+            for name in fnames:
+                if name.startswith('.'):
+                    continue
+                filenames.append(name)
+           
+        assert len(filenames) == 535
+
+        emotion_codes_to_labels = {}
+        #Map the required emotion codes to class label
+        for clss in self.emot_map.keys():
+            for emo_code, emo_class in self.all_emo_codes.items():
+                if clss in emo_class:
+                    emotion_codes_to_labels[emo_code] = self.emot_map[clss]
+        
+        #Grouped the files based on speaker, into dictionary
+        for fname in filenames:
+            speaker_code = fname[0:2]
+            emotion_code = fname[5]
+
+            speaker_id = self._get_speaker_id(speaker_code)
+            emotion_label = emotion_codes_to_labels[emotion_code]
+
+            all_files[speaker_id].append((dirpath+fname,emotion_label))
+        
+        return all_files
+    '''
+    #remove hidden files
+    filenames = [f for f in filenames if not f[0] == '.']
+    print(f'Total of {len(filenames)} files in directory {data_dir}')
+
+    #Put filename into ID and labels
+    all_filenames = []
+    all_labels = []
+    for files in filenames:
+        speaker = files[0:2]
+        emotion = files[5]
+        file_id = files.replace('.wav','')
+
+        if speaker[0] != '.' and speaker in emodb_speaker_ids:
+            emotion_idx = emodb_emo_to_idx[emotion]
+            all_filenames.append(file_id)
+            all_labels.append(emotion_idx)
+
+    assert len(all_filenames) == len(filenames)
+    assert len(all_labels) ==  len(filenames)   
+
+    return all_filenames, all_labels    
+    '''
 SER_DATABASES = {'IEMOCAP': IEMOCAP_database,
-                 'EMODB'  : emoDB_database}
+                 'EMODB'  : EMODB_database}
     
 """
 ### TESTING ###

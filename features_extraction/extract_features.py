@@ -7,6 +7,7 @@ from features_util import extract_features
 from collections import Counter
 import pandas as pd
 from database import SER_DATABASES
+import random
 
 
 def main(args):
@@ -18,13 +19,15 @@ def main(args):
             'ndft'          : args.ndft,
             'nfreq'         : args.nfreq,
             'nmel'          : args.nmel,
-            'segment_size'  : args.segment_size
+            'segment_size'  : args.segment_size,
+            'mixnoise'      : args.mixnoise
             }
     
     dataset  = args.dataset
     features = args.features
     dataset_dir = args.dataset_dir
-    emo_classes = ['ang','sad','hap','neu']
+    mixnoise = args.mixnoise
+
     if args.save_dir is not None:
         out_filename = args.save_dir+dataset+'_'+args.save_label+'.pkl'
     else:
@@ -33,17 +36,37 @@ def main(args):
     print('\n')
     print('*'*50)
     print('\nFEATURES EXTRACTION')
-    print(f'\t{"Dataset":>15}: {dataset}')
-    print(f'\t{"Features":>15}: {features}')
-    print(f'\t{"Dataset dir.":>15}: {dataset_dir}')
-    print(f'\t{"Features file":>15}: {out_filename}')
+    print(f'\t{"Dataset":>20}: {dataset}')
+    print(f'\t{"Features":>20}: {features}')
+    print(f'\t{"Dataset dir.":>20}: {dataset_dir}')
+    print(f'\t{"Features file":>20}: {out_filename}')
+    print(f'\t{"Add noise version":>20}: {mixnoise}')
     print(f"\nPARAMETERS:")
     for key in params:
-        print(f'\t{key:>15}: {params[key]}')
+        print(f'\t{key:>20}: {params[key]}')
     print('\n')
 
-    #Initialize database
-    database = SER_DATABASES[dataset](dataset_dir, emo_classes=emo_classes)
+    # Random seed
+    seed_everything(100)
+
+    if dataset == 'IEMOCAP':
+        # This is the 4-class, improvised data set
+        emot_map = {'ang':0,'sad':1,'hap':2,'neu':3}
+        include_scripted = False
+        
+        # Some publication works combined 'happy' and 'excited' into one 'happy' class,
+        #   enable below for the 5531 dataset
+        #emot_map = {'ang':0,'sad':1,'hap':2, 'exc':2, 'neu':3}
+        #include_scripted = True 
+        #Initialize database
+        database = SER_DATABASES[dataset](dataset_dir, emot_map=emot_map, 
+                                        include_scripted = include_scripted)
+    
+    elif dataset == 'EMODB':
+        # Usually for emoDB, all the 7 emotions are used for classification
+        emot_map={'neutral':0,'happy':1,'sad':2,'angry':3,'bored':4,'fear':5,'disgust':6}
+        database = SER_DATABASES[dataset](dataset_dir, emot_map=emot_map)
+        print(database.get_classes())
 
     #Get file paths and label in database
     speaker_files = database.get_files()
@@ -60,21 +83,30 @@ def main(args):
     #Print classes statistic
         
     print(f'\nSEGMENT CLASS DISTRIBUTION PER SPEAKER:\n')
-    
-    class_dist= []
+    classes = database.get_classes()
+    n_speaker=len(features_data)
+    n_class=len(classes)
+    class_dist= np.zeros((n_speaker,n_class),dtype=np.int)
     speakers=[]
     data_shape=[]
-    for speaker in features_data.keys():
+    for i,speaker in enumerate(features_data.keys()):
         #print(f'\tSpeaker {speaker:>2}: {sorted(Counter(features_data[speaker][2]).items())}')
         cnt = sorted(Counter(features_data[speaker][2]).items())
-        class_dist.append([x[1] for x in cnt])
+        
+        for item in cnt:
+            #print(item)
+            class_dist[i][item[0]]=item[1]
+        #print(class_dist)
         speakers.append(speaker)
-        data_shape.append(str(features_data[speaker][0].shape))
-    class_dist = np.array(class_dist)
-    
-    df = {"speaker": speakers,
+        if mixnoise == True:
+            data_shape.append(str(features_data[speaker][0][0].shape))
+        else:
+            data_shape.append(str(features_data[speaker][0].shape))
+    class_dist = np.vstack(class_dist)
+    #print(class_dist)
+    df = {"speakerID": speakers,
           "shape (N,C,F,T)": data_shape}
-    classes = database.get_classes()
+    
     for c in range(class_dist.shape[1]):
         df[classes[c]] = class_dist[:,c]
     
@@ -96,7 +128,7 @@ def parse_arguments(argv):
     parser.add_argument('dataset', type=str, default='IEMOCAP',
         help='Dataset to extract features. Options:'
              '  - IEMOCAP (default)'
-             '  - emoDB')
+             '  - EMODB')
     parser.add_argument('dataset_dir', type=str,
         help='Path to the dataset directory.')
     
@@ -131,6 +163,9 @@ def parse_arguments(argv):
     parser.add_argument('--segment_size', type=int, default=300,
         help='Size of each features segment')
 
+    parser.add_argument('--mixnoise', action='store_true',
+        help='Set this flag to mix with noise.')
+    
 
     #FEATURES FILE
     parser.add_argument('--save_dir', type=str, default=None,
@@ -146,6 +181,7 @@ def parse_arguments(argv):
 def seed_everything(seed):
     os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
+    random.seed(seed)
     #torch.manual_seed(seed)
     #torch.cuda.manual_seed(seed)
     #torch.backends.cudnn.deterministic = True
