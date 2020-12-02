@@ -1,40 +1,39 @@
 import pickle
 import numpy as np
 import torch
+from torchvision import transforms
 from sklearn.metrics import confusion_matrix
 import pandas as pd
 from imblearn.over_sampling import RandomOverSampler
 from collections import Counter
 from sklearn import preprocessing
-from collections import Counter
-import albumentations as A
 import random
-from tqdm import tqdm
+from PIL import Image, ImageOps
+import matplotlib.pyplot as plt
 
 SCALER_TYPE = {'standard':'preprocessing.StandardScaler()',
                'minmax'  :'preprocessing.MinMaxScaler(feature_range=(0,1))'
               }
 
 
-class TrainLoader(torch.utils.data.Dataset):
+class TrainDataset(torch.utils.data.Dataset):
     """
-    Holds data for a train dataset (e.g., holds training examples as well as
-    training labels.)
-
-    Parameters
-    ----------
     data : ndarray
-        Input data.
+        Input data of shape `N x C x H x W`, where `N` is the number of examples
+        (segments), C is number of input channels (3 in the case of image), `H` is image height,
+        `W` is image width
     target : ndarray
-        Target labels.
-    
+        Labels for segments (note that one utterance might contain more than
+        one segments) of shape `(N,)`.
+    num_classes :
+        Number of classes.    
 
     """
-    def __init__(self, data, target, num_classes=7, pre_process=None):
-        super(TrainLoader).__init__()
+    def __init__(self, data, target, num_classes=4):
+        super(TrainDataset).__init__()
         self.data = data
         self.target = target
-        self.n_samples = data.shape[0]
+        self.n_samples = len(data)
         self.num_classes = num_classes
 
     def __len__(self):
@@ -95,40 +94,40 @@ class TrainLoader(torch.utils.data.Dataset):
 
 
 
-class TestLoader(torch.utils.data.Dataset):
+class TestDataset(torch.utils.data.Dataset):
     """
     Holds data for a validation/test set.
 
     Parameters
     ----------
     data : ndarray
-        Input data of shape `N x H x W x C`, where `N` is the number of examples
-        (segments), `H` is image height, `W` is image width and `C` is the
-        number of channels.
+        Input data of shape `N x C x H x W`, where `N` is the number of examples
+        (segments), C is number of input channels (3 in the case of image), `H` is image height, 
+        `W` is image width
     actual_target : ndarray
-        Actual target labels (labels for utterances) of shape `(N',)`, where
-        `N'` is the number of utterances.
+        Actual target labels (labels for utterances) of shape `(U,)`, where
+        `U` is the number of utterances.
     seg_target : ndarray
         Labels for segments (note that one utterance might contain more than
         one segments) of shape `(N,)`.
     num_segs : ndarray
-        Array of shape `(N',)` indicating how many segments each utterance
+        Array of shape `(U,)` indicating how many segments each utterance
         contains.
     num_classes :
         Number of classes.
     """
 
     def __init__(self, data, actual_target, seg_target,
-                 num_segs, num_classes=7):
-        super(TestLoader).__init__()
+                 num_segs, num_classes=4):
+        super(TestDataset).__init__()
         self.data = data
         self.target = seg_target
-        self.n_samples = data.shape[0]
+        self.n_samples = len(data)
         self.n_actual_samples = actual_target.shape[0]
-
         self.actual_target = actual_target
         self.num_segs = num_segs
         self.num_classes = num_classes
+
 
     def __len__(self):
         return self.n_samples
@@ -207,26 +206,6 @@ class TestLoader(torch.utils.data.Dataset):
 
         return class_acc / n_classes
 
-
-    def confusion_matrix(self, utt_preds):
-        """Compute confusion matrix given the predictions.
-
-        Parameters
-        ----------
-        utt_preds : ndarray
-            Processed predictions.
-
-        """
-        conf = confusion_matrix(self.actual_target, utt_preds)
-        
-        # Make confusion matrix into data frame for readability
-        conf_fmt = pd.DataFrame({"ang": conf[:, 0], "bor": conf[:, 1],
-                             "dis": conf[:, 2], "fear": conf[:, 3],
-                             "hap": conf[:, 4], "sad": conf[:, 5],
-                             "neu": conf[:, 6]})
-        conf_fmt = conf_fmt.to_string(index=False)
-        return (conf, conf_fmt)
-
     
     def confusion_matrix_iemocap(self, utt_preds):
         """Compute confusion matrix given the predictions.
@@ -246,38 +225,51 @@ class TestLoader(torch.utils.data.Dataset):
         return (conf, conf_fmt)
 
 
-class DatasetLoader:
+class SERDataset:
     """
-    Wrapper for both `TrainLoader` and `TestLoader`, which loads pre-processed
-    speech features into `Dataset` objects.
+    Wrapper for both `TrainDataset` and `TestDataset`, which loads and pre-process
+    speech spectorgrams into `Dataset` objects.
+    
+    This also assign the dataset into train, validation, test dataset based on IEMOCAP cross-validation
+    arrangement. There are 10 speakers in total (5 sessions x  2 speakers per session) and the IDs assigned
+    are 1F, 1M, 2F, 2M, 3F, 3M, 4F, 4M, 5F, 5M.
 
     Parameters
     ----------
-    data : tuple
-        Data extracted using `extract_features.py`.
-    num_classes : int
-        Number of classes.
-    pre_process : fn
-        A function to be applied to `data`.
-
+    features_data
+        Spectrograms extracted using `extract_features.py`, labels
+    num_classes
+        Number of emotion classes
+    val_speaker_id
+        ID of speaker to be used as validation in kfold cross-validation
+    test_speaker_id
+        ID of speaker to be used as test in kfold cross-validation 
+    oversample : bool
+        Set 'True' to apply random dataset oversampling to balance the classes
+        
     """
-    def __init__(self, features_data,
+    def __init__(self, features_data, num_classes = 4,
                 val_speaker_id='1M', test_speaker_id='1F', 
-                scaling='standard', oversample=False,
-                augment=False):
+                oversample=False):
         
-        #features_data format: dictionary
-        #    {speaker_id: (data_tot, labels_tot, labels_segs_tot, segs)}
-        #data shape (N_segment, Channels, Freq., Time)
-        
+        """
+        features_data format: dictionary
+            {speaker_id: (data_tot, labels_tot, labels_segs_tot, segs)}
 
-        #get training dataset
+                [0] data_tot: all spectrogram segments, shape =  (N_segment, Channels, Freq., Time)
+                [1] labels_tot: label for each utterance
+                [2] labels_seg_tot: labels for each segments (each utterance might be split into multiple
+                                    segments)
+                [3] segs: number of segments for each utterance
+        """
+
+        #get training spectrograms
         train_data, train_labels = None, None
         for speaker_id in features_data.keys():
             if speaker_id in [val_speaker_id, test_speaker_id]:
                 continue
             
-            #Concatenate all training features segment
+            #Concatenate spectrograms from speakers in training set
             if train_data is None:
                 train_data = features_data[speaker_id][0].astype(np.float32)
             else:
@@ -285,7 +277,7 @@ class DatasetLoader:
                                             features_data[speaker_id][0].astype(np.float32) ),
                                             axis=0)
             
-            #Concatenate all training segment labels
+            #Concatenate the corresponding labels
             if train_labels is None:
                 train_labels = features_data[speaker_id][2].astype(np.long)
             else:
@@ -293,33 +285,27 @@ class DatasetLoader:
                                                features_data[speaker_id][2].astype(np.long)),
                                                axis=0)
         
-        if augment == True:
-            #perform training data augmentation
-            self.train_data, self.train_labels = data_augment(train_data, train_labels,
-                                                                concat_ori=True)
-            #self.train_labels = train_labels
-        else:
-            self.train_data = train_data
-            self.train_labels = train_labels
-        self.num_classes=len(Counter(train_labels).items())
-        self.num_in_ch = self.train_data.shape[1]
+        self.train_data     = train_data
+        self.train_labels   = train_labels
+        self.num_classes    = num_classes
 
-        #get validation dataset
+        #get validation spectrograms
         self.val_data       = features_data[val_speaker_id][0].astype(np.float32)
         self.val_seg_labels = features_data[val_speaker_id][2].astype(np.long)
         self.val_labels     = features_data[val_speaker_id][1].astype(np.long)
         self.val_num_segs   = features_data[val_speaker_id][3]
 
-        #get validation dataset
+        #get test spectrograms
         self.test_data       = features_data[test_speaker_id][0].astype(np.float32)
         self.test_seg_labels = features_data[test_speaker_id][2].astype(np.long)
         self.test_labels     = features_data[test_speaker_id][1].astype(np.long)
         self.test_num_segs   = features_data[test_speaker_id][3]
 
-        #Normalize dataset
-        self._normalize(scaling)
-    
-        #random oversampling on training dataset
+ 
+        #Normalize dataset to the range of [0, 1] suitable as image pixel
+        self._normalize('minmax')
+
+        #Random oversampling on training dataset
         if oversample == True:
             print('\nPerform training dataset oversampling')
             datar, labelr = random_oversample(self.train_data, self.train_labels)
@@ -327,22 +313,35 @@ class DatasetLoader:
             self.train_data = datar
             self.train_labels = labelr
         
+        train_data_shape = self.train_data.shape
+        val_data_shape = self.val_data.shape
+        test_data_shape = self.test_data.shape
 
-        assert self.val_data.shape[0] == self.val_seg_labels.shape[0] == sum(self.val_num_segs)
+        #convert normalized spectrogram to 3 channel image, apply AlexNet image pre-processing
+        self.train_data = self._spec_to_gray(self.train_data)
+        self.val_data = self._spec_to_gray(self.val_data)
+        self.test_data = self._spec_to_gray(self.test_data)
+        self.num_in_ch = 3
+            
+        assert len(self.train_data) == train_data_shape[0]
+        assert len(self.val_data) == val_data_shape[0]
+        assert len(self.test_data) == test_data_shape[0]
+
+        assert val_data_shape[0] == self.val_seg_labels.shape[0] == sum(self.val_num_segs)
         assert self.val_labels.shape[0] == self.val_num_segs.shape[0]
-        assert self.test_data.shape[0] == self.test_seg_labels.shape[0] == sum(self.test_num_segs)
+        assert test_data_shape[0] == self.test_seg_labels.shape[0] == sum(self.test_num_segs)
         assert self.test_labels.shape[0] == self.test_num_segs.shape[0]
             
         print('\n<<DATASET>>\n')
         print(f'Val. speaker id : {val_speaker_id}')
         print(f'Test speaker id : {test_speaker_id}')
-        print(f'Train data      : {self.train_data.shape}')
+        print(f'Train data      : {train_data_shape}')
         print(f'Train labels    : {self.train_labels.shape}')
-        print(f'Eval. data      : {self.val_data.shape}')
+        print(f'Eval. data      : {val_data_shape}')
         print(f'Eval. label     : {self.val_labels.shape}')
         print(f'Eval. seg labels: {self.val_seg_labels.shape}')
         print(f'Eval. num seg   : {self.val_num_segs.shape}')
-        print(f'Test data       : {self.test_data.shape}')
+        print(f'Test data       : {test_data_shape}')
         print(f'Test label      : {self.test_labels.shape}')
         print(f'Test seg labels : {self.test_seg_labels.shape}')
         print(f'Test num seg    : {self.test_num_segs.shape}')
@@ -350,10 +349,12 @@ class DatasetLoader:
 
     
     def _normalize(self, scaling):
+        
         '''
         calculate normalization factor from training dataset and apply to
            the whole dataset
         '''
+        
         #get data range
         input_range = self._get_data_range()
 
@@ -368,7 +369,6 @@ class DatasetLoader:
         self.test_data  = rearrange(self.test_data)
         
         #scaler type
-        #scaler = SCALER_TYPE[scaling](eval(SCALER_ARGS[scaling]))
         scaler = eval(SCALER_TYPE[scaling])
 
         for ch in range(nch):
@@ -404,19 +404,93 @@ class DatasetLoader:
         
         return [dmin, dmax]
 
+    def _spec_to_rgb(self,data):
+
+        """
+        Convert normalized spectrogram to pseudo-RGB image based on pyplot color map
+            and apply AlexNet image pre-processing
+        
+        Input: data
+                - shape (N,C,H,W) = (num_spectrogram_segments, 1, Freq, Time)
+                - data range [0.0, 1.0]
+        """
+
+        #AlexNet preprocessing
+        alexnet_preprocess = transforms.Compose([
+                transforms.Resize(224),
+                #transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                ]) 
+
+        # Get the color map to convert normalized spectrum to RGB
+        cm = plt.get_cmap('jet') #brg #gist_heat #brg #bwr
+
+        #Flip the frequency axis to orientate image upward, remove Channel axis
+        data = np.flip(data,axis=2)
+        
+        data = np.squeeze(data, axis=1) 
+
+        data_tensor = list()
+
+        for i, seg in enumerate(data):
+            seg = np.clip(seg, 0.0, 1.0)
+            seg_rgb = (cm(seg)[:,:,:3]*255.0).astype(np.uint8)
+            
+            img = Image.fromarray(seg_rgb, mode='RGB')
+
+            data_tensor.append(alexnet_preprocess(img))
+        
+        return data_tensor
+
+
+    def _spec_to_gray(self,data):
+
+        """
+        Convert normalized spectrogram to 3-channel gray image (identical data on each channel)
+            and apply AlexNet image pre-processing
+        
+        Input: data
+                - shape (N,C,H,W) = (num_spectrogram_segments, 1, Freq, Time)
+                - data range [0.0, 1.0]
+        """
+
+        #AlexNet preprocessing
+        alexnet_preprocess = transforms.Compose([
+                transforms.Resize(256),
+                #transforms.CenterCrop(224),
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+                ]) 
+
+        #Convert format to uint8, flip the frequency axis to orientate image upward, 
+        #   duplicate into 3 channels
+        data = np.clip(data,0.0, 1.0)
+        data = (data*255.0).astype(np.uint8)
+        data = np.flip(data,axis=2)
+        data = np.moveaxis(data,1,-1)
+        data = np.repeat(data,3,axis=-1)
+       
+        data_tensor = list()
+        for i, seg in enumerate(data):
+            img = Image.fromarray(seg, mode='RGB')
+            data_tensor.append(alexnet_preprocess(img))
+            
+        return data_tensor  
 
     def get_train_dataset(self):
-        return TrainLoader(
-            self.train_data, self.train_labels, num_classes=self.num_classes)
+        return TrainDataset(
+            self.train_data, self.train_labels,
+             num_classes=self.num_classes)
     
     def get_val_dataset(self):
-        return TestLoader(
+        return TestDataset(
             self.val_data, self.val_labels,
             self.val_seg_labels, self.val_num_segs,
             num_classes=self.num_classes)
     
     def get_test_dataset(self):
-        return TestLoader(
+        return TestDataset(
             self.test_data, self.test_labels,
             self.test_seg_labels, self.test_num_segs,
             num_classes=self.num_classes)
@@ -441,59 +515,5 @@ def random_oversample(data, labels):
     return data_resampled, label_resampled
 
 
-def data_augment(data, label, concat_ori=False):
-    """
-    Perform data augmentation based on albumentations package.
-    Transform pipeline:
-        - Time masking
-    """
-    aug_data = None
-    
-    
-    for spec in tqdm(data, desc='Data Augmentation'):
-        #spec = data[i].copy().squeeze(axis=0)
-        spec = spec.squeeze(axis=0)
-        spec_aug = spec_augment(spec, num_mask=1, time_masking_max_percentage=0.25 )
-        spec_aug = np.expand_dims(spec_aug, axis=0)
-        if aug_data is None:
-            aug_data = spec_aug
-        else:
-            aug_data = np.vstack((aug_data, spec_aug))
-    
-    aug_data = np.expand_dims(aug_data, axis=1)
 
-    if concat_ori == True:
-        return np.concatenate((data, aug_data), axis=0), np.concatenate((label,label), axis=None)
-    
-    else:
-        return aug_data, label
-    
-    #return aug_data
-
-def spec_augment(spec: np.ndarray, num_mask=0, 
-                 freq_masking_max_percentage=0.0, time_masking_max_percentage=0.0):
-
-    """
-    Quick implementation of Google's SpecAug
-    Source: https://www.kaggle.com/davids1992/specaugment-quick-implementation
-    """
-    
-    spec = spec.copy()
-    for i in range(num_mask):
-        all_frames_num, all_freqs_num = spec.shape
-        freq_percentage = random.uniform(0.0, freq_masking_max_percentage)
-        
-        num_freqs_to_mask = int(freq_percentage * all_freqs_num)
-        f0 = np.random.uniform(low=0.0, high=all_freqs_num - num_freqs_to_mask)
-        f0 = int(f0)
-        spec[:, f0:f0 + num_freqs_to_mask] = 0
-
-        time_percentage = random.uniform(0.0, time_masking_max_percentage)
-        
-        num_frames_to_mask = int(time_percentage * all_frames_num)
-        t0 = np.random.uniform(low=0.0, high=all_frames_num - num_frames_to_mask)
-        t0 = int(t0)
-        spec[t0:t0 + num_frames_to_mask, :] = 0
-    
-    return spec
 

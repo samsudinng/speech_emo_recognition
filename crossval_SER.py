@@ -4,38 +4,40 @@ import sys
 import pickle
 import os
 
-repeat_kfold = 1 #to  perform k-fold for n-times with different seed
+repeat_kfold = 5 # to  perform k-fold for n-times with different seed
 
 #------------PARAMETERS---------------#
-save_label = 'fcn_baseline'
 
-features_file = '../SER_FCN/IEMOCAP_logspec200.pkl'
-ser_model     = 'fcn_attention'
+features_file = 'IEMOCAP_logspec200.pkl'
+ser_model     = 'alexnet_gap'
 
 val_id =  ['1F','1M','2F','2M','3F','3M','4F','4M','5F','5M']
 test_id = ['1M','1F','2M','2F','3M','3F','4M','4F','5M','5F']
-num_epochs  = '200'
-batch_size  = '32'
+num_epochs  = '100'
+batch_size  = '64'
 lr          = '0.0001'
-dropout     = '0.2'
-random_seed = 100
+random_seed = 111
 gpu = '1'
+save_label = 'fcn_mixup'
 
-#parameters for tuning
-fcsize      = '256'
-scaler = 'standard'
+#additional flags: --pretrained, --mixup, --oversampling should be added directly
+#   into train_ser.sys.argv as shown below
+
+
+
 
 #Start Cross Validation
 
 for repeat in range(repeat_kfold):
 
     all_stat = []
-    random_seed +=  (repeat*10)
+    random_seed +=  (repeat*100)
     seed = str(random_seed)
 
     for v_id, t_id in list(zip(val_id, test_id)):
 
-        train_ser.sys.argv = [
+        train_ser.sys.argv      = [
+                        
                                   'train_ser.py', 
                                   features_file,
                                   '--ser_model',ser_model,
@@ -45,16 +47,13 @@ for repeat in range(repeat_kfold):
                                   '--num_epochs', num_epochs,
                                   '--batch_size', batch_size,
                                   '--lr', lr,
-                                  '--dropout', dropout,
                                   '--seed', seed,
-                                  '--fcsize', fcsize,
-                                  '--scaler',scaler,
                                   '--save_label', save_label,
-                                  '--shuffle',
-                                  '--pretrained'
+                                  '--pretrained',
+                                  '--mixup'
                                   ]
-    
 
+    
         stat = train_ser.main(parse_arguments(sys.argv[1:]))   
         all_stat.append(stat)       
         os.remove(save_label+'.pth')
