@@ -33,30 +33,25 @@ The spectrogram of each utterance is splitted into segments with length *T*. If 
 
 ### SER Models
 
-Three models are available in the framework:  
+Two models are available in the framework:  
 
 1. __AlexNet Finetuning__ 
 - Pre-trained AlexNet, finetuned to classify emotion from speech spectrogram images (IEMOCAP). 
 - The model is based on *torchvision.models.alexnet* model in pyTorch.
-- Number of parameters = ~57m
-- Best model mean accuracy - Weighted Accuracy: 74.0%, Unweighted Accuracy: 64.4% (baseline + stability training)
 
 2. __FCN+GAP__
 - Pre-trained AlexNet with the fully connected layers replaced with global average pooling (GAP).
 - Finetuned to classify emotion from speech spectrogram images (IEMOCAP)
 - Fully-connected layers are prone to over-fitting and require large number of parameters. GAP was proposed by Lin et. al. (2014) in [*Network In Network*] (https://arxiv.org/abs/1312.4400) to address these issues.
 - This model perform as well as AlexNet Finetuning but requiring only 4.5% as many parameters.
-- Number of parameters: ~2.5m 
-- Best model mean accuracy - Weighted Accuracy: 73.2%, Unweighted Accuracy: 62.6% (baseline)
 
 
+The model to be trained can be selected via command line with the following labels. The summary of model parameters and accuracy (5-fold, speaker independent cross-validation) are also summarized below.
 
-The model to be trained can be selected via command line with the following labels.
-
-|Model label|Model Name|
-|-----------|----------|
-|*'alexnet'*|AlexNet Finetuning|
-|*'alexnet_gap'*|FCN+GAP|
+|Model label|Model Name|# of Params.|Weighted Accuracy|Unweighted Accuracy| Model Setting |
+|-----------|----------|----------|----------|----------| ----------|
+|*'alexnet'*|AlexNet Finetuning| ~57m | 74.0% | 64.4%| baseline + stability training|
+|*'alexnet_gap'*|FCN+GAP| ~2.5m | 73.2% | 62.6% | baseline |
 
 
 ------------------------------------
