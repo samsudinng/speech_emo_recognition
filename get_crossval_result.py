@@ -9,15 +9,15 @@ def main(args):
 
     label         = args.label
     kfold         = args.kfold
-    num_sessions  = args.n_runs
+    n_runs        = args.n_runs
     datadir       = args.path
 
     num_classes   = 4
-    classes       = ["ang", "sad","hap","neu"]
     num_sessions  = 5
+    classes       = ["ang", "sad","hap","neu"]
     test_id       = ['1M','1F','2M','2F','3M','3F','4M','4F','5M','5F']
     sessions      = ['Sess.1','Sess.2','Sess.3','Sess.4','Sess.5']
-    five_fold_idx = [0,3,5,7,9] #[1M, 2F, 3M, 4F, 5F]
+    five_fold_idx = [0,3,5,7,9] #index of speaker ID used as test_id for 5 fold CV -> [1M, 2F, 3M, 4F, 5F]
     conf_matrix_display = 'percentage' # 'count' or 'percentage'
 
 
@@ -29,10 +29,9 @@ def main(args):
     test_ua=[]
     test_conf=np.zeros((num_classes,num_classes),dtype=int)
     test_conf_avg=np.zeros((num_classes,num_classes),dtype=float)
-    n_files=0
+    n_files = 0
 
-
-    for ns in range(num_sessions):
+    for ns in range(n_runs):
         f = f'allstat_iemocap_{label}_{ns}.pkl'
         try:
             with open(datadir+f, "rb") as fin:
@@ -40,6 +39,7 @@ def main(args):
             n_files += 1
         except:
             continue
+	
 
         numfold = len(all_stat)
         incr=1
