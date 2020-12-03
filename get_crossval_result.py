@@ -21,6 +21,20 @@ def main(args):
     conf_matrix_display = 'percentage' # 'count' or 'percentage'
 
 
+    """
+    Format of the result file (allstat*): [(fold1_data), (fold2_data) ..., (fold10_data)]
+    Each foldx_data is tuple:
+	[0] all epoch train loss
+	[1] all epoch train wa
+	[2] all epoch train ua
+        [3] all epoch val loss
+        [4] all epoch val wa
+        [5] all epoch val ua
+	[6] test loss
+	[7] test WA
+	[8] test UA
+	[9] test confusion matrix	
+     """
 
     # CALCULATE RESULTS
 
