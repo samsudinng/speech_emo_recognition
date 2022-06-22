@@ -21,7 +21,7 @@ librosa==0.7.1
 matplotlib==3.3.0
 networkx==2.4
 numba==0.48.0
-numpy==1.19.1
+numpy==1.22.0
 opencv-python==4.3.0.36
 opencv-python-headless==4.3.0.36
 packaging==20.4
