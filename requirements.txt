@@ -1,7 +1,7 @@
 albumentations==0.4.6
 appnope==0.1.0
 backcall==0.1.0
-certifi==2020.6.20
+certifi==2022.12.7
 cycler==0.10.0
 decorator==4.4.2
 future==0.18.2
